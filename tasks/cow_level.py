@@ -473,6 +473,13 @@ class CowLevelTask(Task):
                 # 判定為奶牛關後，啟動『當輪迴圈』
                 while True:
                     time.sleep(40)
+
+                    # 如果上一輪點擊的是賜福關，代表有能力要點
+                    if (text_right == "賜福關" and chosen_tag  == "right"):
+                        self.logger.info(f"賜福關，點擊能力")
+                        ok_enter, _ = self._tap_region_center(ctx, chosen, chosen_tag)
+                        time.sleep(1.0)
+
                     try:
                         capture_screen(ctx.screenshot_path, device_id=ctx.device_id)
                     except Exception:
