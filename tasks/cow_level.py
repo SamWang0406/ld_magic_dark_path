@@ -148,6 +148,8 @@ class CowLevelTask(Task):
         # 也支援以座標方式指定（優先於區域），預設為 950,500
         self.final_stage_point = self._parse_point_or_none(os.getenv("FINAL_STAGE_POINT", "950,500"))
 
+        self.random_text_region = self._parse_region(os.getenv("RANDOM_TEXT_REGION", "1750,90,160,50"))
+
     def _stat_line(self) -> str:
         # 增加 cow_count 顯示，讓日誌可直接看見累計遇到奶牛關次數
         return (
@@ -450,6 +452,7 @@ class CowLevelTask(Task):
                 self.logger.info(f"左區域文字='{text_left}'")
                 self.logger.info(f"右區域文字='{text_right}'")
 
+
                 # 若一開始不是奶牛關，維持既有行為：選關→退出→回傳
                 if (self.target_text not in text_left) and (self.target_text not in text_right):
                     chosen = None
@@ -462,16 +465,26 @@ class CowLevelTask(Task):
                         chosen_tag = "random_right"
                     else:
                         chosen = self.right_region
-                        chosen_tag = "right"
+                        chosen_tag = "right"   
 
                     ok_enter, _ = self._tap_region_center(ctx, chosen, chosen_tag)
+
+                    time.sleep(self.tap_delay_seconds)
+
+                    if (chosen_tag == "random_left"):
+                        # 如果是隨機副本的話，檢查右上角是什麼，並且將 text_left 更新
+                        text_left = self._get_random_level_text(ctx)
+                    elif (chosen_tag == "random_right"):
+                        # 如果是隨機副本的話，檢查右上角是什麼，並且將 text_right 更新
+                        text_right = self._get_random_level_text(ctx)
+
                     if ok_enter:
                         self.stat_exit_without_final += 1
                         _ = self._simple_exit_sequence(ctx)
                     return TaskResult(acted=ok_enter, message=self._stat_line())
 
                 # 判定為奶牛關後，啟動『當輪迴圈』
-                while True:
+                while True and (text_left == self.target_text or text_right == self.target_text):
                     time.sleep(40)
 
                     # 如果上一輪點擊的是賜福關，代表有能力要點
@@ -526,29 +539,6 @@ class CowLevelTask(Task):
                         # 回到當輪迴圈頂端，持續偵測
                         continue
 
-                    # 沒有奶牛關
-                    chosen = None
-                    chosen_tag = ""
-                    if "隨機副本" in text_left:
-                        chosen = self.left_region
-                        chosen_tag = "random_left"
-                        round_stars += STAR_BY_LABEL.get("隨機副本", 4)
-                    elif "隨機副本" in text_right:
-                        chosen = self.right_region
-                        chosen_tag = "random_right"
-                        round_stars += STAR_BY_LABEL.get("隨機副本", 4)
-                    else:
-                        chosen = self.right_region
-                        chosen_tag = "right"
-                        round_stars += STAR_BY_LABEL.get(text_right, 4)
-
-                    try:
-                        self.logger.info(f"[ROUND] stars={round_stars} cows={round_cow_hits}")
-                    except Exception:
-                        pass
-
-                    ok_enter, _ = self._tap_region_center(ctx, chosen, chosen_tag)
-
                     # 星數達標則點最終關卡，據『當輪奶牛關數量』決策
                     if round_stars >= 10:
                         # 點最終關
@@ -579,7 +569,42 @@ class CowLevelTask(Task):
                     else:
                         # 星數未達：離開關卡後繼續當輪偵測
                         if ok_enter:
-                            continue
+                            continue                    
+
+                    # 沒有奶牛關
+                    chosen = None
+                    chosen_tag = ""
+                    if "隨機副本" in text_left:
+                        chosen = self.left_region
+                        chosen_tag = "random_left"
+                        round_stars += STAR_BY_LABEL.get("隨機副本", 4)
+                    elif "隨機副本" in text_right:
+                        chosen = self.right_region
+                        chosen_tag = "random_right"
+                        round_stars += STAR_BY_LABEL.get("隨機副本", 4)
+                    else:
+                        chosen = self.right_region
+                        chosen_tag = "right"
+                        round_stars += STAR_BY_LABEL.get(text_right, 4)
+                    try:
+                        self.logger.info(f"[ROUND] stars={round_stars} cows={round_cow_hits}")
+                    except Exception:
+                        pass
+
+                    ok_enter, _ = self._tap_region_center(ctx, chosen, chosen_tag)
+
+                    time.sleep(self.tap_delay_seconds)
+
+                    if (chosen_tag == "random_left"):
+                        # 如果是隨機副本的話，檢查右上角是什麼，並且將 text_left 更新
+                        text_left = self._get_random_level_text(ctx)
+                    elif (chosen_tag == "random_right"):
+                        # 如果是隨機副本的話，檢查右上角是什麼，並且將 text_right 更新
+                        text_right = self._get_random_level_text(ctx)
+
+                    if (text_left == "奶牛關" or text_right == "奶牛關"):
+                        round_cow_hits += 1
+                        self.cow_hits += 1
 
 
                 # 當輪 break（只遇一次，已退出）→ 回到外層 while True 重新來過
@@ -588,3 +613,14 @@ class CowLevelTask(Task):
         except Exception:
             # 只輸出統計，不輸出錯誤堆疊
             return TaskResult(acted=False, message=self._stat_line())
+
+
+    def _get_random_level_text(self, ctx: TaskContext) -> str:
+        # 進入此流程時先重新擷取畫面，確保讀到最新畫面內容
+        try:
+            capture_screen(ctx.screenshot_path, device_id=ctx.device_id)
+        except Exception:
+            pass
+        result = find_text(ctx.screenshot_path, self.random_text_region)
+        self.logger.info(f"隨機副本的關卡為：'{result}'")
+        return result
