@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from typing import Optional, Tuple
+import os
 
 
 def _load_image(path: str, description: str) -> np.ndarray:
@@ -60,6 +61,40 @@ def _find_best_match(
     return best_loc, float(best_score), float(best_scale), best_result_map, best_h, best_w, float(best_value_mean)
 
 
+def _ensure_dir(d: str) -> None:
+    if d and not os.path.exists(d):
+        try:
+            os.makedirs(d, exist_ok=True)
+        except Exception:
+            pass
+
+
+def _save_heatmap_images(result_map: np.ndarray, out_dir: str, tag: str, best_score: float) -> None:
+    """Save raw and color/upscaled heatmap images for easier inspection."""
+    res_norm = cv2.normalize(result_map, None, 0, 255, cv2.NORM_MINMAX)
+    res_u8 = np.uint8(res_norm)
+    raw_path = os.path.join(out_dir, f"{tag}_heatmap_raw.png")
+    cv2.imwrite(raw_path, res_u8)
+
+    # Colorize and upscale for readability
+    color = cv2.applyColorMap(res_u8, cv2.COLORMAP_JET)
+    h, w = color.shape[:2]
+    # Aim for ~400px min side for visibility
+    target_min = 400
+    scale = max(1.0, target_min / max(1, min(h, w)))
+    up_w, up_h = int(round(w * scale)), int(round(h * scale))
+    color_up = cv2.resize(color, (up_w, up_h), interpolation=cv2.INTER_NEAREST)
+
+    # Mark the maximum location
+    _, _, _, max_loc = cv2.minMaxLoc(result_map)
+    cx, cy = int(round(max_loc[0] * scale)), int(round(max_loc[1] * scale))
+    cv2.circle(color_up, (cx, cy), 6, (0, 255, 255), 2)
+    cv2.putText(color_up, f"best={best_score:.3f}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
+    nice_path = os.path.join(out_dir, f"{tag}_heatmap.png")
+    cv2.imwrite(nice_path, color_up)
+
+
 def _handle_match(
     screen_bgr: np.ndarray,
     best_loc: Optional[tuple[int, int]],
@@ -72,11 +107,17 @@ def _handle_match(
     threshold: float,
     debug: bool,
     offset: tuple[int, int] = (0, 0),
+    debug_tag: Optional[str] = None,
+    debug_dir: str = "debug",
+    *,
+    value_check: bool = True,
+    value_mean_min: float = 40.0,
+    value_mean_max: float = 240.0,
 ) -> Tuple[Optional[tuple[int, int]], float]:
     x_offset, y_offset = offset
 
     if best_loc and best_score >= threshold:
-        if best_value_mean < 40 or best_value_mean > 240:
+        if value_check and (best_value_mean < value_mean_min or best_value_mean > value_mean_max):
             print(f"[SKIP] 光度不符 (mean={best_value_mean:.1f})，忽略此結果")
             return None, best_score
 
@@ -95,24 +136,32 @@ def _handle_match(
             2,
         )
 
-        cv2.imwrite("matched_screen.png", screen_bgr)
+        if debug:
+            _ensure_dir(debug_dir)
+            tag = debug_tag or "match"
+            cv2.imwrite(os.path.join(debug_dir, f"{tag}_matched.png"), screen_bgr)
 
         if debug and best_result_map is not None:
-            res_vis = cv2.normalize(best_result_map, None, 0, 255, cv2.NORM_MINMAX)
-            cv2.imwrite("heatmap.png", np.uint8(res_vis))
+            _ensure_dir(debug_dir)
+            tag = debug_tag or "match"
+            _save_heatmap_images(best_result_map, debug_dir, tag, best_score)
 
         print(
-            f"[MATCH] scale={best_scale:.2f}, score={best_score:.3f}, "
+            f"[MATCH] scale={best_scale:.2f}, 信心度={best_score:.3f} (門檻={threshold:.2f}), "
             f"loc={(top_left[0], top_left[1])}, meanV={best_value_mean:.1f}"
         )
         return (int(center[0]), int(center[1])), float(best_score)
 
-    if best_result_map is not None:
-        res_vis = cv2.normalize(best_result_map, None, 0, 255, cv2.NORM_MINMAX)
-        cv2.imwrite("heatmap.png", np.uint8(res_vis))
-
-    cv2.imwrite("matched_screen.png", screen_bgr)
-    print(f"[NO MATCH] best scale={best_scale:.2f}, score={best_score:.3f}, meanV={best_value_mean:.1f}")
+    if debug:
+        _ensure_dir(debug_dir)
+        tag = debug_tag or "no_match"
+        if best_result_map is not None:
+            _save_heatmap_images(best_result_map, debug_dir, tag, best_score)
+        cv2.imwrite(os.path.join(debug_dir, f"{tag}_matched.png"), screen_bgr)
+    print(
+        f"[NO MATCH] best scale={best_scale:.2f}, 信心度={best_score:.3f} (門檻={threshold:.2f}), "
+        f"meanV={best_value_mean:.1f}"
+    )
     return None, float(best_score)
 
 
@@ -121,6 +170,12 @@ def find_image_on_screen(
     target_path: str,
     threshold: float = 0.8,
     debug: bool = False,
+    *,
+    debug_tag: Optional[str] = None,
+    debug_dir: str = "debug",
+    value_check: bool = True,
+    value_mean_min: float = 40.0,
+    value_mean_max: float = 240.0,
 ) -> Tuple[Optional[tuple[int, int]], float]:
     """在整張螢幕截圖中尋找目標圖片。"""
 
@@ -142,6 +197,11 @@ def find_image_on_screen(
         best_value_mean,
         threshold,
         debug,
+        debug_tag=debug_tag,
+        debug_dir=debug_dir,
+        value_check=value_check,
+        value_mean_min=value_mean_min,
+        value_mean_max=value_mean_max,
     )
 
 
@@ -151,6 +211,12 @@ def find_image_in_region(
     region: tuple[int, int, int, int],
     threshold: float = 0.8,
     debug: bool = False,
+    *,
+    debug_tag: Optional[str] = None,
+    debug_dir: str = "debug",
+    value_check: bool = True,
+    value_mean_min: float = 40.0,
+    value_mean_max: float = 240.0,
 ) -> Tuple[Optional[tuple[int, int]], float]:
     """僅在指定區域內搜尋目標圖片。
 
@@ -191,4 +257,9 @@ def find_image_in_region(
         threshold,
         debug,
         offset=(x, y),
+        debug_tag=debug_tag,
+        debug_dir=debug_dir,
+        value_check=value_check,
+        value_mean_min=value_mean_min,
+        value_mean_max=value_mean_max,
     )

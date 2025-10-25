@@ -1,5 +1,7 @@
 import subprocess
 import shlex
+import time
+import os
 from typing import Optional
 
 def _run(cmd: str) -> str:
@@ -23,6 +25,13 @@ def capture_screen(save_path: str, device_id: Optional[str] = None):
 def tap(x: int, y: int, device_id: Optional[str] = None):
     prefix = _prefix(device_id)
     _run(f"adb {prefix}shell input tap {int(x)} {int(y)}")
+    # Optional small delay between taps to avoid missing UI transitions
+    try:
+        delay = float(os.getenv("TAP_DELAY_SECONDS", "1.0"))
+    except Exception:
+        delay = 1.0
+    if delay > 0:
+        time.sleep(delay)
 
 def swipe(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300, device_id: Optional[str] = None):
     prefix = _prefix(device_id)
