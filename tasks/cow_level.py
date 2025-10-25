@@ -559,7 +559,7 @@ class CowLevelTask(Task):
                         if round_cow_hits <= 1:
                             self.logger.info(f"[EXIT] 動作: 只遇到一次奶牛關，重新開始")
                             # 只遇到一次奶牛關：退出並重新來過（從 421 流程再跑一輪）
-                            self.stat_exit_without_final += 1
+                            self.stat_exit_with_final += 1
                             _ = self._simple_exit_sequence(ctx)
                             # 跳出當輪，回到外層重新開始一輪（重置 round_*）
                             break
